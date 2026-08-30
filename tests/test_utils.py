@@ -1,6 +1,6 @@
 import numpy as np
 
-from utils import mae, make_windows, mape, rmse
+from utils import mae, make_windows, mape, rmse, scale_series
 
 
 def test_make_windows_shapes_and_content():
@@ -52,3 +52,20 @@ def test_mape_avoids_division_by_zero():
     # should not raise, and should be finite
     result = mape(y_true, y_pred)
     assert np.isfinite(result)
+
+
+def test_scale_series_fit_frac_ignores_tail(tmp_path):
+    # First half is constant at 10, second half jumps to 1000. A scaler fit on
+    # the whole array would have its mean/std dragged toward the tail; one fit
+    # only on the first half (fit_frac=0.5) should not see the jump at all.
+    arr = np.concatenate([np.full(50, 10.0), np.full(50, 1000.0)]).astype("float32")
+    _, scaler = scale_series(arr, str(tmp_path / "scaler.json"), fit_frac=0.5)
+    assert scaler.mean == 10.0
+    assert scaler.std == 1.0  # zero-variance first half falls back to std=1.0
+
+
+def test_scale_series_default_fit_frac_uses_whole_array(tmp_path):
+    arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype="float32")
+    scaled, scaler = scale_series(arr, str(tmp_path / "scaler.json"))
+    assert scaler.mean == float(np.mean(arr))
+    np.testing.assert_allclose(scaled, (arr - scaler.mean) / scaler.std)

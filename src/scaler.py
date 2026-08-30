@@ -13,6 +13,7 @@ import json
 import os
 
 import numpy as np
+import numpy.typing as npt
 
 
 class JsonStandardScaler:
@@ -22,19 +23,19 @@ class JsonStandardScaler:
         self.mean = mean
         self.std = std
 
-    def fit(self, arr: np.ndarray) -> JsonStandardScaler:
+    def fit(self, arr: npt.NDArray[np.floating]) -> JsonStandardScaler:
         self.mean = float(np.mean(arr))
         std = float(np.std(arr))
         self.std = std if std > 0 else 1.0
         return self
 
-    def transform(self, arr: np.ndarray) -> np.ndarray:
+    def transform(self, arr: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
         return (arr - self.mean) / self.std
 
-    def fit_transform(self, arr: np.ndarray) -> np.ndarray:
+    def fit_transform(self, arr: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
         return self.fit(arr).transform(arr)
 
-    def inverse_transform(self, arr: np.ndarray) -> np.ndarray:
+    def inverse_transform(self, arr: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
         return arr * self.std + self.mean
 
     def save(self, path: str) -> None:

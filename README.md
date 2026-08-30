@@ -9,15 +9,15 @@ A hands-on project for forecasting time-series with PyTorch LSTMs. It creates re
 - Synthetic daily series generation (configurable length & seed)
 - Sliding-window dataset preparation for supervised learning
 - LSTM model with dropout, Adam optimizer, early stopping
-- Multi-step forecasting (direct & recursive)
+- Multi-step forecasting (direct: one forward pass predicts the whole horizon)
 - Metrics: RMSE, MAE, MAPE
 - Visualizations: training curves & forecast plots
 - Saved artifacts: `best_lstm.pt`, `scaler.json`, `metrics.json`
 
 ## Results
-- **RMSE:** 22.25  
-- **MAE:** 16.09  
-- **MAPE:** 7.64%
+- **RMSE:** 21.06  
+- **MAE:** 15.55  
+- **MAPE:** 7.40%
 
 > **Note on "forecast":** the plots and metrics above evaluate the model on the
 > last `horizon` days already present in the input CSV (a backtest), not real

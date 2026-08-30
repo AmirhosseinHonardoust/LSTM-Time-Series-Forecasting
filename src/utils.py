@@ -20,10 +20,20 @@ def make_windows(series: np.ndarray, lookback: int, horizon: int) -> tuple[np.nd
     return np.array(x), np.array(y)
 
 
-def scale_series(arr: np.ndarray, out_path: str) -> tuple[np.ndarray, JsonStandardScaler]:
-    """Fit a scaler on ``arr``, save it to ``out_path`` as JSON, and return the scaled array."""
+def scale_series(
+    arr: np.ndarray, out_path: str, fit_frac: float = 1.0
+) -> tuple[np.ndarray, JsonStandardScaler]:
+    """Fit a scaler on the first ``fit_frac`` of ``arr``, save it to ``out_path`` as
+    JSON, and return the *whole* array scaled with those statistics.
+
+    ``fit_frac`` < 1.0 avoids leaking validation-window statistics into the fit:
+    pass the same fraction used for the train/val split (e.g. 0.8 to match a
+    time-ordered 80/20 split) so only the training portion informs mean/std.
+    """
+    split = max(1, int(len(arr) * fit_frac))
     scaler = JsonStandardScaler()
-    scaled = scaler.fit_transform(arr)
+    scaler.fit(arr[:split])
+    scaled = scaler.transform(arr)
     scaler.save(out_path)
     return scaled, scaler
 

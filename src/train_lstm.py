@@ -190,7 +190,9 @@ def main() -> None:
     df = load_series(args.input, args.lookback, args.horizon)
     series = df["value"].values.astype("float32")
 
-    scaled, scaler = scale_series(series, os.path.join(args.outdir, "scaler.json"))
+    # fit_frac=0.8 matches build_dataloaders' time-ordered 80/20 split below, so
+    # the scaler's mean/std come only from the training portion of the series.
+    scaled, scaler = scale_series(series, os.path.join(args.outdir, "scaler.json"), fit_frac=0.8)
     tr_dl, va_dl, x = build_dataloaders(scaled, args.lookback, args.horizon, args.batch_size)
 
     model = LSTMForecaster(
