@@ -5,8 +5,10 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
+import pandas as pd
 
 from scaler import JsonStandardScaler
 
@@ -84,3 +86,30 @@ def mae(y_true: FloatArray, y_pred: FloatArray) -> float:
 def mape(y_true: FloatArray, y_pred: FloatArray, eps: float = 1e-8) -> float:
     denom = np.maximum(np.abs(y_true), eps)
     return float(np.mean(np.abs((y_true - y_pred) / denom)) * 100.0)
+
+
+def plot_forecast(
+    dates: pd.Series,
+    values: pd.Series,
+    pred_start_idx: int,
+    preds: FloatArray,
+    outpath: str,
+    title: str = "Forecast vs Actual",
+) -> None:
+    """Plot the actual series with the forecasted horizon overlaid and save it.
+
+    Shared by ``train_lstm.py`` (post-training backtest plot) and
+    ``evaluate.py`` (standalone evaluation plot), previously duplicated in
+    each with only the title differing.
+    """
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(dates, values, label="actual")
+    fut_dates = dates[pred_start_idx : pred_start_idx + len(preds)]
+    ax.plot(fut_dates, preds, label="forecast")
+    ax.set_title(title)
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Value")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=160)
+    plt.close(fig)

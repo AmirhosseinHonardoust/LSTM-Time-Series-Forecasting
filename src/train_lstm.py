@@ -23,6 +23,7 @@ from utils import (
     mae,
     make_windows,
     mape,
+    plot_forecast,
     raw_fit_cutoff,
     rmse,
     scale_series,
@@ -36,26 +37,6 @@ def plot_curves(history: dict[str, list[float]], outpath: str) -> None:
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss (MSE)")
     ax.set_title("Training & Validation Loss")
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(outpath, dpi=160)
-    plt.close(fig)
-
-
-def plot_forecast(
-    dates: pd.Series,
-    values: pd.Series,
-    pred_start_idx: int,
-    preds: FloatArray,
-    outpath: str,
-) -> None:
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(dates, values, label="actual")
-    fut_dates = dates[pred_start_idx : pred_start_idx + len(preds)]
-    ax.plot(fut_dates, preds, label="forecast")
-    ax.set_title("Forecast vs Actual")
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Value")
     ax.legend()
     fig.tight_layout()
     fig.savefig(outpath, dpi=160)
@@ -90,6 +71,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--hidden-size and --num-layers must be positive")
     if args.patience <= 0:
         raise ValueError("--patience must be positive")
+    if args.epochs <= 0:
+        raise ValueError("--epochs must be positive")
+    if args.lr <= 0:
+        raise ValueError("--lr must be positive")
 
 
 def load_series(input_path: str, lookback: int, horizon: int) -> pd.DataFrame:

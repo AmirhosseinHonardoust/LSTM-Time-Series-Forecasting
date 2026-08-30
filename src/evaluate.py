@@ -7,13 +7,12 @@ import json
 import os
 from typing import Any
 
-import matplotlib.pyplot as plt
 import pandas as pd
 import torch
 
 from model import LSTMForecaster
 from scaler import JsonStandardScaler
-from utils import inverse_scale, mae, make_windows, mape, rmse, scale_with
+from utils import inverse_scale, mae, make_windows, mape, plot_forecast, rmse, scale_with
 
 # Defaults mirror LSTMForecaster's own constructor defaults, used only as a
 # fallback for checkpoints saved before this config was persisted.
@@ -120,18 +119,15 @@ def main() -> None:
     with open(os.path.join(args.outdir, "metrics.json"), "w") as f:
         json.dump(r, f, indent=2)
 
-    dates = df["date"]
     pred_start = len(df) - horizon
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(dates, df["value"], label="actual")
-    ax.plot(dates[pred_start : pred_start + horizon], pred, label="forecast")
-    ax.set_title("Forecast vs Actual (Evaluate)")
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Value")
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(os.path.join(args.outdir, "forecast_plot.png"), dpi=160)
-    plt.close(fig)
+    plot_forecast(
+        df["date"],
+        df["value"],
+        pred_start,
+        pred,
+        os.path.join(args.outdir, "forecast_plot.png"),
+        title="Forecast vs Actual (Evaluate)",
+    )
     print("[OK] Evaluation complete. Metrics saved.")
 
 
