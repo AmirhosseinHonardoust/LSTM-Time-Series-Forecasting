@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Generated training artifacts (reproduce via README commands)
+outputs/*.pt
+outputs/*.png
+outputs/*.json
+outputs/*.pkl
+!outputs/.gitkeep
+
+# OS
+.DS_Store
