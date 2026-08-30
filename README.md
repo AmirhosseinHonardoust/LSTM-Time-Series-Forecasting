@@ -19,6 +19,12 @@ A hands-on project for forecasting time-series with PyTorch LSTMs. It creates re
 - **MAE:** 16.09  
 - **MAPE:** 7.64%
 
+> **Note on "forecast":** the plots and metrics above evaluate the model on the
+> last `horizon` days already present in the input CSV (a backtest), not real
+> future dates beyond it — the "actual" values plotted alongside the forecast
+> are ground truth, not projections. To forecast beyond the CSV's date range,
+> extend `data/daily_series.csv` (or generate a longer series) first.
+
 ---
 ### Forecast vs Actual
 <img width="1600" height="800" alt="forecast_plot" src="https://github.com/user-attachments/assets/f6dd5c67-f946-43a7-8c7c-c1f7c0711891" />
@@ -48,6 +54,7 @@ lstm-time-series-forecasting/
 │  ├─ evaluate.py
 │  └─ utils.py
 ├─ tests/
+│  ├─ test_evaluate_config.py
 │  ├─ test_generate_series.py
 │  ├─ test_scaler.py
 │  ├─ test_train_eval_smoke.py
@@ -70,16 +77,29 @@ pip install -r requirements.txt
 ```bash
 python data/generate_series.py --start 2020-01-01 --end 2025-12-31 --seed 42 --out data/daily_series.csv
 ```
+`data/daily_series.csv` is committed as a ready-to-use sample — it's exactly the
+output of the command above (seed 42), kept in the repo so `Train Model` and
+`Evaluate` work without a generation step. Re-run the command (with a different
+`--seed`/date range if you like) to regenerate or replace it.
 
 ## Train Model
 ```bash
 python src/train_lstm.py --input data/daily_series.csv --horizon 30 --lookback 60 --epochs 30 --batch-size 64 --outdir outputs --seed 42
 ```
+Architecture and early stopping are also configurable: `--hidden-size` (default
+64), `--num-layers` (default 2), `--dropout` (default 0.2), `--patience`
+(default 5 epochs). Whatever you choose is saved into `outputs/best_lstm.pt`
+alongside the weights, so `evaluate.py` always reconstructs the exact same
+model — no need to re-specify architecture flags at evaluation time.
 
 ## Evaluate
 ```bash
-python src/evaluate.py --input data/daily_series.csv --model outputs/best_lstm.pt --lookback 60 --horizon 30 --outdir outputs
+python src/evaluate.py --input data/daily_series.csv --model outputs/best_lstm.pt --outdir outputs
 ```
+`--lookback`/`--horizon` are optional here and default to whatever the
+checkpoint was trained with. Pass them explicitly only to double-check they
+match — a mismatched value raises a clear error instead of a raw tensor
+shape-mismatch failure.
 
 **Outputs**
 - `outputs/metrics.json` – RMSE, MAE, MAPE  
@@ -97,3 +117,11 @@ mypy src data
 pytest
 ```
 CI (`.github/workflows/ci.yml`) runs the same checks on every push and pull request.
+
+**On imports:** `src/` and `data/` are plain script directories, not installed
+packages — modules import each other with bare names (`from model import ...`)
+rather than `from src.model import ...`. This works because Python adds a
+script's own directory to `sys.path` when it's run directly (`tests/conftest.py`
+does the same for `pytest`). This is a deliberate choice to keep the project
+runnable with just `pip install -r requirements.txt` and no editable install;
+it's not meant to be imported as a library from outside `src/`/`data/`.
