@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 
 from model import LSTMForecaster
+from scaler import JsonStandardScaler
 from utils import inverse_scale, mae, make_windows, mape, rmse, scale_series
 
 
@@ -60,41 +61,144 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--hidden-size", type=int, default=64)
+    ap.add_argument("--num-layers", type=int, default=2)
+    ap.add_argument("--dropout", type=float, default=0.2)
+    ap.add_argument("--patience", type=int, default=5, help="early-stopping patience in epochs")
     ap.add_argument("--outdir", type=str, default="outputs")
     ap.add_argument("--seed", type=int, default=42)
     return ap.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
-
+def validate_args(args: argparse.Namespace) -> None:
     if not os.path.isfile(args.input):
         raise FileNotFoundError(f"Input series not found: {args.input}")
     if args.lookback <= 0 or args.horizon <= 0:
         raise ValueError("--lookback and --horizon must be positive")
+    if args.batch_size <= 0:
+        raise ValueError("--batch-size must be positive")
+    if args.hidden_size <= 0 or args.num_layers <= 0:
+        raise ValueError("--hidden-size and --num-layers must be positive")
+    if args.patience <= 0:
+        raise ValueError("--patience must be positive")
+
+
+def load_series(input_path: str, lookback: int, horizon: int) -> pd.DataFrame:
+    """Read the CSV and fail fast if it's too short for the requested window sizes."""
+    df = pd.read_csv(input_path, parse_dates=["date"])
+    if len(df) <= lookback + horizon:
+        raise ValueError(
+            f"Series has {len(df)} rows, too short for lookback={lookback} + horizon={horizon}"
+        )
+    return df
+
+
+def build_dataloaders(
+    scaled: np.ndarray, lookback: int, horizon: int, batch_size: int
+) -> tuple[DataLoader, DataLoader, np.ndarray]:
+    """Slice into windows, time-split 80/20 (no shuffle, so val is the most recent 20%)."""
+    x, y = make_windows(scaled, lookback, horizon)
+    x_train, x_val, y_train, y_val = train_test_split(x, y, test_size=0.2, shuffle=False)
+    tr_ds = TensorDataset(torch.tensor(x_train[:, :, None]), torch.tensor(y_train))
+    va_ds = TensorDataset(torch.tensor(x_val[:, :, None]), torch.tensor(y_val))
+    tr_dl = DataLoader(tr_ds, batch_size=batch_size, shuffle=True)
+    va_dl = DataLoader(va_ds, batch_size=batch_size, shuffle=False)
+    return tr_dl, va_dl, x
+
+
+def train_one_epoch(
+    model: LSTMForecaster,
+    dl: DataLoader,
+    opt: torch.optim.Optimizer,
+    crit: nn.Module,
+    desc: str,
+) -> float:
+    model.train()
+    tloss, n = 0.0, 0
+    for xb, yb in tqdm(dl, desc=desc):
+        opt.zero_grad()
+        preds = model(xb)
+        loss = crit(preds, yb)
+        loss.backward()
+        opt.step()
+        tloss += loss.item() * xb.size(0)
+        n += xb.size(0)
+    return tloss / n
+
+
+def validate_epoch(model: LSTMForecaster, dl: DataLoader, crit: nn.Module, desc: str) -> float:
+    model.eval()
+    vloss, vn = 0.0, 0
+    with torch.no_grad():
+        for xb, yb in tqdm(dl, desc=desc):
+            preds = model(xb)
+            loss = crit(preds, yb)
+            vloss += loss.item() * xb.size(0)
+            vn += xb.size(0)
+    return vloss / vn
+
+
+def save_checkpoint(path: str, model: LSTMForecaster, args: argparse.Namespace) -> None:
+    """Save weights plus the full window/architecture config so evaluate.py can
+    reconstruct an identical model instead of guessing from its own CLI defaults."""
+    torch.save(
+        {
+            "model_state": model.state_dict(),
+            "horizon": args.horizon,
+            "lookback": args.lookback,
+            "hidden_size": args.hidden_size,
+            "num_layers": args.num_layers,
+            "dropout": args.dropout,
+        },
+        path,
+    )
+
+
+def run_final_forecast(
+    model: LSTMForecaster,
+    x: np.ndarray,
+    df: pd.DataFrame,
+    scaler: JsonStandardScaler,
+    horizon: int,
+    outdir: str,
+) -> dict[str, float]:
+    """Forecast the last `horizon` steps of the input series (a backtest against the
+    most recent known values, not a prediction of dates beyond the input CSV) and
+    save the comparison plot."""
+    model.eval()
+    last_input = torch.tensor(x[-1][:, None]).unsqueeze(0)
+    with torch.no_grad():
+        pred_scaled = model(last_input).numpy().flatten()
+    pred = inverse_scale(pred_scaled, scaler)
+
+    pred_start = len(df) - horizon
+    forecast_path = os.path.join(outdir, "forecast_plot.png")
+    plot_forecast(df["date"], df["value"], pred_start, pred, forecast_path)
+
+    y_true = df["value"].values[-horizon:]
+    return {"rmse": rmse(y_true, pred), "mae": mae(y_true, pred), "mape": mape(y_true, pred)}
+
+
+def main() -> None:
+    args = parse_args()
+    validate_args(args)
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     os.makedirs(args.outdir, exist_ok=True)
 
-    df = pd.read_csv(args.input, parse_dates=["date"])
+    df = load_series(args.input, args.lookback, args.horizon)
     series = df["value"].values.astype("float32")
 
-    if len(series) <= args.lookback + args.horizon:
-        raise ValueError(
-            f"Series has {len(series)} rows, too short for "
-            f"lookback={args.lookback} + horizon={args.horizon}"
-        )
-
     scaled, scaler = scale_series(series, os.path.join(args.outdir, "scaler.json"))
-    x, y = make_windows(scaled, args.lookback, args.horizon)
-    x_train, x_val, y_train, y_val = train_test_split(x, y, test_size=0.2, shuffle=False)
-    tr_ds = TensorDataset(torch.tensor(x_train[:, :, None]), torch.tensor(y_train))
-    va_ds = TensorDataset(torch.tensor(x_val[:, :, None]), torch.tensor(y_val))
-    tr_dl = DataLoader(tr_ds, batch_size=args.batch_size, shuffle=True)
-    va_dl = DataLoader(va_ds, batch_size=args.batch_size, shuffle=False)
+    tr_dl, va_dl, x = build_dataloaders(scaled, args.lookback, args.horizon, args.batch_size)
 
-    model = LSTMForecaster(horizon=args.horizon)
+    model = LSTMForecaster(
+        hidden_size=args.hidden_size,
+        num_layers=args.num_layers,
+        dropout=args.dropout,
+        horizon=args.horizon,
+    )
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     crit = nn.MSELoss()
     best_val = float("inf")
@@ -103,27 +207,8 @@ def main() -> None:
     best_path = os.path.join(args.outdir, "best_lstm.pt")
 
     for ep in range(1, args.epochs + 1):
-        model.train()
-        tloss, n = 0.0, 0
-        for xb, yb in tqdm(tr_dl, desc=f"Epoch {ep}/{args.epochs} [train]"):
-            opt.zero_grad()
-            preds = model(xb)
-            loss = crit(preds, yb)
-            loss.backward()
-            opt.step()
-            tloss += loss.item() * xb.size(0)
-            n += xb.size(0)
-        tl = tloss / n
-
-        model.eval()
-        vloss, vn = 0.0, 0
-        with torch.no_grad():
-            for xb, yb in tqdm(va_dl, desc=f"Epoch {ep}/{args.epochs} [val]"):
-                preds = model(xb)
-                loss = crit(preds, yb)
-                vloss += loss.item() * xb.size(0)
-                vn += xb.size(0)
-        vl = vloss / vn
+        tl = train_one_epoch(model, tr_dl, opt, crit, desc=f"Epoch {ep}/{args.epochs} [train]")
+        vl = validate_epoch(model, va_dl, crit, desc=f"Epoch {ep}/{args.epochs} [val]")
 
         history["train_loss"].append(tl)
         history["val_loss"].append(vl)
@@ -132,17 +217,10 @@ def main() -> None:
         if vl < best_val:
             best_val = vl
             stale = 0
-            torch.save(
-                {
-                    "model_state": model.state_dict(),
-                    "horizon": args.horizon,
-                    "lookback": args.lookback,
-                },
-                best_path,
-            )
+            save_checkpoint(best_path, model, args)
         else:
             stale += 1
-            if stale >= 5:
+            if stale >= args.patience:
                 print("Early stopping.")
                 break
 
@@ -150,18 +228,8 @@ def main() -> None:
 
     state = torch.load(best_path, map_location="cpu", weights_only=True)
     model.load_state_dict(state["model_state"])
-    model.eval()
-    last_input = torch.tensor(x[-1][:, None]).unsqueeze(0)
-    with torch.no_grad():
-        pred_scaled = model(last_input).numpy().flatten()
-    pred = inverse_scale(pred_scaled, scaler)
 
-    pred_start = len(df) - args.horizon
-    forecast_path = os.path.join(args.outdir, "forecast_plot.png")
-    plot_forecast(df["date"], df["value"], pred_start, pred, forecast_path)
-
-    y_true = df["value"].values[-args.horizon :]
-    r = {"rmse": rmse(y_true, pred), "mae": mae(y_true, pred), "mape": mape(y_true, pred)}
+    r = run_final_forecast(model, x, df, scaler, args.horizon, args.outdir)
     with open(os.path.join(args.outdir, "metrics.json"), "w") as f:
         json.dump(r, f, indent=2)
     print("[OK] Training complete. Metrics saved.")
