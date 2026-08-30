@@ -33,12 +33,19 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--end", type=str, default="2025-12-31")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out", type=str, default="data/daily_series.csv")
+    ap.add_argument(
+        "--date-col", type=str, default="date", help="date column name in the output CSV"
+    )
+    ap.add_argument(
+        "--value-col", type=str, default="value", help="value column name in the output CSV"
+    )
     return ap.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     df = generate_series(args.start, args.end, args.seed)
+    df = df.rename(columns={"date": args.date_col, "value": args.value_col})
     df.to_csv(args.out, index=False)
     print(f"[OK] wrote {args.out} with {len(df):,} rows")
 

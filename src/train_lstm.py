@@ -25,6 +25,8 @@ from utils import (
     mape,
     plot_forecast,
     raw_fit_cutoff,
+    require_columns,
+    resolve_device,
     rmse,
     scale_series,
 )
@@ -57,6 +59,14 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--patience", type=int, default=5, help="early-stopping patience in epochs")
     ap.add_argument("--outdir", type=str, default="outputs")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        help="'auto' (default, prefers CUDA/MPS then CPU), 'cpu', 'cuda', 'cuda:0', 'mps', ...",
+    )
+    ap.add_argument("--date-col", type=str, default="date", help="date column name in --input")
+    ap.add_argument("--value-col", type=str, default="value", help="value column name in --input")
     return ap.parse_args()
 
 
@@ -77,9 +87,20 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--lr must be positive")
 
 
-def load_series(input_path: str, lookback: int, horizon: int) -> pd.DataFrame:
-    """Read the CSV and fail fast if it's too short for the requested window sizes."""
-    df = pd.read_csv(input_path, parse_dates=["date"])
+def load_series(
+    input_path: str,
+    lookback: int,
+    horizon: int,
+    date_col: str = "date",
+    value_col: str = "value",
+) -> pd.DataFrame:
+    """Read the CSV, validate its columns, and fail fast if it's too short for the
+    requested window sizes. Returns a frame with columns renamed to "date"/"value"
+    so the rest of the pipeline doesn't need to know about custom column names."""
+    df = pd.read_csv(input_path)
+    require_columns(df, [date_col, value_col], input_path)
+    df = df.rename(columns={date_col: "date", value_col: "value"})
+    df["date"] = pd.to_datetime(df["date"])
     if len(df) <= lookback + horizon:
         raise ValueError(
             f"Series has {len(df)} rows, too short for lookback={lookback} + horizon={horizon}"
@@ -108,10 +129,12 @@ def train_one_epoch(
     opt: torch.optim.Optimizer,
     crit: nn.Module,
     desc: str,
+    device: torch.device,
 ) -> float:
     model.train()
     tloss, n = 0.0, 0
     for xb, yb in tqdm(dl, desc=desc):
+        xb, yb = xb.to(device), yb.to(device)
         opt.zero_grad()
         preds = model(xb)
         loss = crit(preds, yb)
@@ -123,12 +146,17 @@ def train_one_epoch(
 
 
 def validate_epoch(
-    model: LSTMForecaster, dl: DataLoader[tuple[torch.Tensor, ...]], crit: nn.Module, desc: str
+    model: LSTMForecaster,
+    dl: DataLoader[tuple[torch.Tensor, ...]],
+    crit: nn.Module,
+    desc: str,
+    device: torch.device,
 ) -> float:
     model.eval()
     vloss, vn = 0.0, 0
     with torch.no_grad():
         for xb, yb in tqdm(dl, desc=desc):
+            xb, yb = xb.to(device), yb.to(device)
             preds = model(xb)
             loss = crit(preds, yb)
             vloss += loss.item() * xb.size(0)
@@ -159,14 +187,15 @@ def run_final_forecast(
     scaler: JsonStandardScaler,
     horizon: int,
     outdir: str,
+    device: torch.device,
 ) -> dict[str, float]:
     """Forecast the last `horizon` steps of the input series (a backtest against the
     most recent known values, not a prediction of dates beyond the input CSV) and
     save the comparison plot."""
     model.eval()
-    last_input = torch.tensor(x[-1][:, None]).unsqueeze(0)
+    last_input = torch.tensor(x[-1][:, None]).unsqueeze(0).to(device)
     with torch.no_grad():
-        pred_scaled = model(last_input).numpy().flatten()
+        pred_scaled = model(last_input).cpu().numpy().flatten()
     pred = inverse_scale(pred_scaled, scaler)
 
     pred_start = len(df) - horizon
@@ -185,7 +214,10 @@ def main() -> None:
     np.random.seed(args.seed)
     os.makedirs(args.outdir, exist_ok=True)
 
-    df = load_series(args.input, args.lookback, args.horizon)
+    device = resolve_device(args.device)
+    print(f"[device] using {device}")
+
+    df = load_series(args.input, args.lookback, args.horizon, args.date_col, args.value_col)
     series = df["value"].values.astype("float32")
 
     # Fit the scaler only on raw values that fall entirely within training
@@ -199,7 +231,7 @@ def main() -> None:
         num_layers=args.num_layers,
         dropout=args.dropout,
         horizon=args.horizon,
-    )
+    ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     crit = nn.MSELoss()
     best_val = float("inf")
@@ -208,8 +240,12 @@ def main() -> None:
     best_path = os.path.join(args.outdir, "best_lstm.pt")
 
     for ep in range(1, args.epochs + 1):
-        tl = train_one_epoch(model, tr_dl, opt, crit, desc=f"Epoch {ep}/{args.epochs} [train]")
-        vl = validate_epoch(model, va_dl, crit, desc=f"Epoch {ep}/{args.epochs} [val]")
+        tl = train_one_epoch(
+            model, tr_dl, opt, crit, desc=f"Epoch {ep}/{args.epochs} [train]", device=device
+        )
+        vl = validate_epoch(
+            model, va_dl, crit, desc=f"Epoch {ep}/{args.epochs} [val]", device=device
+        )
 
         history["train_loss"].append(tl)
         history["val_loss"].append(vl)
@@ -230,7 +266,7 @@ def main() -> None:
     state = torch.load(best_path, map_location="cpu", weights_only=True)
     model.load_state_dict(state["model_state"])
 
-    r = run_final_forecast(model, x, df, scaler, args.horizon, args.outdir)
+    r = run_final_forecast(model, x, df, scaler, args.horizon, args.outdir, device)
     with open(os.path.join(args.outdir, "metrics.json"), "w") as f:
         json.dump(r, f, indent=2)
     print("[OK] Training complete. Metrics saved.")

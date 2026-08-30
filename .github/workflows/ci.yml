@@ -38,11 +38,10 @@ jobs:
       - name: Pytest
         run: pytest -v
 
-      # Informational only (continue-on-error): several pinned deps (notably
-      # torch==2.2.2) have known CVEs with fixes only in newer major versions.
-      # Bumping those pins is a separate, higher-risk change that needs its
-      # own behavior-equivalence verification, so this step reports findings
-      # without failing the build.
+      # Informational only (continue-on-error): stays non-blocking so a new
+      # CVE with no fix release yet (or a transitive advisory) can't fail CI
+      # on its own. Pins are bumped deliberately, with behavior-equivalence
+      # verification, when this scan finds something.
       - name: Dependency vulnerability scan
         continue-on-error: true
         run: |

@@ -9,10 +9,37 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+import torch
 
 from scaler import JsonStandardScaler
 
 FloatArray = npt.NDArray[np.floating[Any]]
+
+
+def require_columns(df: pd.DataFrame, columns: list[str], source: str) -> None:
+    """Raise a clear ValueError if any of ``columns`` is missing from ``df``,
+    instead of letting a downstream ``df["col"]`` raise a raw KeyError."""
+    missing = [c for c in columns if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"{source}: missing required column(s) {missing}. " f"Found columns: {list(df.columns)}"
+        )
+
+
+def resolve_device(name: str) -> torch.device:
+    """Resolve a --device CLI value to a torch.device.
+
+    ``"auto"`` picks CUDA, then Apple MPS, then falls back to CPU. Any other
+    value (``"cpu"``, ``"cuda"``, ``"cuda:0"``, ``"mps"``, ...) is passed
+    straight to ``torch.device``, which raises a clear error on garbage input.
+    """
+    if name != "auto":
+        return torch.device(name)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
 
 
 def make_windows(series: FloatArray, lookback: int, horizon: int) -> tuple[FloatArray, FloatArray]:

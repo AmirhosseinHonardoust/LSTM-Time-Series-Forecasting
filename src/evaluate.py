@@ -12,7 +12,17 @@ import torch
 
 from model import LSTMForecaster
 from scaler import JsonStandardScaler
-from utils import inverse_scale, mae, make_windows, mape, plot_forecast, rmse, scale_with
+from utils import (
+    inverse_scale,
+    mae,
+    make_windows,
+    mape,
+    plot_forecast,
+    require_columns,
+    resolve_device,
+    rmse,
+    scale_with,
+)
 
 # Defaults mirror LSTMForecaster's own constructor defaults, used only as a
 # fallback for checkpoints saved before this config was persisted.
@@ -42,6 +52,14 @@ def parse_args() -> argparse.Namespace:
         help="must match the checkpoint's training horizon; defaults to the saved value",
     )
     ap.add_argument("--outdir", type=str, default="outputs")
+    ap.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        help="'auto' (default, prefers CUDA/MPS then CPU), 'cpu', 'cuda', 'cuda:0', 'mps', ...",
+    )
+    ap.add_argument("--date-col", type=str, default="date", help="date column name in --input")
+    ap.add_argument("--value-col", type=str, default="value", help="value column name in --input")
     return ap.parse_args()
 
 
@@ -83,12 +101,18 @@ def main() -> None:
             "or pass --outdir pointing at the training run's output directory."
         )
 
+    device = resolve_device(args.device)
+    print(f"[device] using {device}")
+
     state = torch.load(args.model, map_location="cpu", weights_only=True)
     ckpt_cfg = load_checkpoint_config(state)
     lookback = resolve_window_arg("lookback", args.lookback, int(ckpt_cfg["lookback"]))
     horizon = resolve_window_arg("horizon", args.horizon, int(ckpt_cfg["horizon"]))
 
-    df = pd.read_csv(args.input, parse_dates=["date"])
+    df = pd.read_csv(args.input)
+    require_columns(df, [args.date_col, args.value_col], args.input)
+    df = df.rename(columns={args.date_col: "date", args.value_col: "value"})
+    df["date"] = pd.to_datetime(df["date"])
     series = df["value"].values.astype("float32")
 
     if len(series) <= lookback + horizon:
@@ -105,13 +129,13 @@ def main() -> None:
         num_layers=int(ckpt_cfg["num_layers"]),
         dropout=float(ckpt_cfg["dropout"]),
         horizon=horizon,
-    )
+    ).to(device)
     model.load_state_dict(state.get("model_state", state))
     model.eval()
 
-    last_input = torch.tensor(x[-1][:, None]).unsqueeze(0)
+    last_input = torch.tensor(x[-1][:, None]).unsqueeze(0).to(device)
     with torch.no_grad():
-        pred_scaled = model(last_input).numpy().flatten()
+        pred_scaled = model(last_input).cpu().numpy().flatten()
     pred = inverse_scale(pred_scaled, scaler)
 
     y_true = df["value"].values[-horizon:]
