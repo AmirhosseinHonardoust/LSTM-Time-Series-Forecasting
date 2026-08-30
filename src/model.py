@@ -34,4 +34,5 @@ class LSTMForecaster(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out, _ = self.lstm(x)
         h_last = out[:, -1, :]
-        return self.fc(h_last)
+        result: torch.Tensor = self.fc(h_last)
+        return result

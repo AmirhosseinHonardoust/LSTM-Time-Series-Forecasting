@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from typing import Any
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -45,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     return ap.parse_args()
 
 
-def load_checkpoint_config(state: dict) -> dict[str, int | float]:
+def load_checkpoint_config(state: dict[str, Any]) -> dict[str, int | float]:
     """Pull window/architecture config saved by train_lstm.py's save_checkpoint(),
     falling back to LSTMForecaster's defaults for older checkpoints that predate it."""
     return {key: state.get(key, default) for key, default in _LEGACY_DEFAULTS.items()}

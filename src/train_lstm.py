@@ -17,7 +17,16 @@ from tqdm import tqdm
 
 from model import LSTMForecaster
 from scaler import JsonStandardScaler
-from utils import inverse_scale, mae, make_windows, mape, rmse, scale_series
+from utils import (
+    FloatArray,
+    inverse_scale,
+    mae,
+    make_windows,
+    mape,
+    raw_fit_cutoff,
+    rmse,
+    scale_series,
+)
 
 
 def plot_curves(history: dict[str, list[float]], outpath: str) -> None:
@@ -37,7 +46,7 @@ def plot_forecast(
     dates: pd.Series,
     values: pd.Series,
     pred_start_idx: int,
-    preds: np.ndarray,
+    preds: FloatArray,
     outpath: str,
 ) -> None:
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -93,9 +102,11 @@ def load_series(input_path: str, lookback: int, horizon: int) -> pd.DataFrame:
     return df
 
 
-def build_dataloaders(
-    scaled: np.ndarray, lookback: int, horizon: int, batch_size: int
-) -> tuple[DataLoader, DataLoader, np.ndarray]:
+def build_dataloaders(scaled: FloatArray, lookback: int, horizon: int, batch_size: int) -> tuple[
+    DataLoader[tuple[torch.Tensor, ...]],
+    DataLoader[tuple[torch.Tensor, ...]],
+    FloatArray,
+]:
     """Slice into windows, time-split 80/20 (no shuffle, so val is the most recent 20%)."""
     x, y = make_windows(scaled, lookback, horizon)
     x_train, x_val, y_train, y_val = train_test_split(x, y, test_size=0.2, shuffle=False)
@@ -108,7 +119,7 @@ def build_dataloaders(
 
 def train_one_epoch(
     model: LSTMForecaster,
-    dl: DataLoader,
+    dl: DataLoader[tuple[torch.Tensor, ...]],
     opt: torch.optim.Optimizer,
     crit: nn.Module,
     desc: str,
@@ -126,7 +137,9 @@ def train_one_epoch(
     return tloss / n
 
 
-def validate_epoch(model: LSTMForecaster, dl: DataLoader, crit: nn.Module, desc: str) -> float:
+def validate_epoch(
+    model: LSTMForecaster, dl: DataLoader[tuple[torch.Tensor, ...]], crit: nn.Module, desc: str
+) -> float:
     model.eval()
     vloss, vn = 0.0, 0
     with torch.no_grad():
@@ -156,7 +169,7 @@ def save_checkpoint(path: str, model: LSTMForecaster, args: argparse.Namespace) 
 
 def run_final_forecast(
     model: LSTMForecaster,
-    x: np.ndarray,
+    x: FloatArray,
     df: pd.DataFrame,
     scaler: JsonStandardScaler,
     horizon: int,
@@ -190,9 +203,10 @@ def main() -> None:
     df = load_series(args.input, args.lookback, args.horizon)
     series = df["value"].values.astype("float32")
 
-    # fit_frac=0.8 matches build_dataloaders' time-ordered 80/20 split below, so
-    # the scaler's mean/std come only from the training portion of the series.
-    scaled, scaler = scale_series(series, os.path.join(args.outdir, "scaler.json"), fit_frac=0.8)
+    # Fit the scaler only on raw values that fall entirely within training
+    # windows, so no validation-window statistic leaks into mean/std.
+    cutoff = raw_fit_cutoff(len(series), args.lookback, args.horizon)
+    scaled, scaler = scale_series(series, os.path.join(args.outdir, "scaler.json"), fit_upto=cutoff)
     tr_dl, va_dl, x = build_dataloaders(scaled, args.lookback, args.horizon, args.batch_size)
 
     model = LSTMForecaster(
