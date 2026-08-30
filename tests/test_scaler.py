@@ -16,9 +16,12 @@ def test_matches_sklearn_standard_scaler():
     js = JsonStandardScaler()
     js_scaled = js.fit_transform(arr)
 
-    np.testing.assert_allclose(sk_scaled, js_scaled, rtol=1e-5)
-    np.testing.assert_allclose(sk.mean_[0], js.mean, rtol=1e-5)
-    np.testing.assert_allclose(sk.scale_[0], js.std, rtol=1e-5)
+    # float32 mean/std can accumulate in a slightly different order between
+    # numpy and sklearn depending on BLAS/platform, so allow float32-scale
+    # tolerance (atol covers near-zero elements where rtol alone is too strict).
+    np.testing.assert_allclose(sk_scaled, js_scaled, rtol=1e-4, atol=1e-5)
+    np.testing.assert_allclose(sk.mean_[0], js.mean, rtol=1e-4, atol=1e-5)
+    np.testing.assert_allclose(sk.scale_[0], js.std, rtol=1e-4, atol=1e-5)
 
 
 def test_inverse_transform_round_trips():
