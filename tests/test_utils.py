@@ -1,7 +1,20 @@
 import numpy as np
+import pandas as pd
+import pytest
+import torch
 from sklearn.model_selection import train_test_split
 
-from utils import mae, make_windows, mape, raw_fit_cutoff, rmse, scale_series, train_val_split_sizes
+from utils import (
+    mae,
+    make_windows,
+    mape,
+    raw_fit_cutoff,
+    require_columns,
+    resolve_device,
+    rmse,
+    scale_series,
+    train_val_split_sizes,
+)
 
 
 def test_make_windows_shapes_and_content():
@@ -95,3 +108,31 @@ def test_raw_fit_cutoff_excludes_every_validation_window_value():
     assert cutoff <= first_val_window_start + lookback + horizon
     assert cutoff > first_val_window_start  # sanity: cutoff lands inside/after last train window
     assert len(x_val) == n_windows - n_train
+
+
+def test_require_columns_passes_when_all_present():
+    df = pd.DataFrame({"date": [1], "value": [2]})
+    require_columns(df, ["date", "value"], "some.csv")  # should not raise
+
+
+def test_require_columns_raises_with_missing_names_and_source():
+    df = pd.DataFrame({"date": [1]})
+    with pytest.raises(ValueError, match=r"some\.csv.*value"):
+        require_columns(df, ["date", "value"], "some.csv")
+
+
+def test_resolve_device_explicit_cpu():
+    assert resolve_device("cpu") == torch.device("cpu")
+
+
+def test_resolve_device_auto_returns_a_valid_device():
+    # Don't assert which backend -- just that "auto" resolves without raising
+    # and produces something torch can actually use.
+    device = resolve_device("auto")
+    assert isinstance(device, torch.device)
+    torch.zeros(1, device=device)
+
+
+def test_resolve_device_rejects_garbage():
+    with pytest.raises(RuntimeError):
+        resolve_device("not-a-real-device")

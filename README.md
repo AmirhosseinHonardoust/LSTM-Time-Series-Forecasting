@@ -194,6 +194,13 @@ For development tools (pytest, Ruff, Black, mypy):
 pip install -r requirements-dev.txt
 ```
 
+Optionally, run the same checks automatically on every commit:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
 ---
 
 ## Quick Start
@@ -253,6 +260,9 @@ Architecture and early stopping are also configurable:
 | `--num-layers` | 2 | Number of stacked LSTM layers |
 | `--dropout` | 0.2 | Dropout applied between LSTM layers |
 | `--patience` | 5 epochs | Early-stopping patience on validation loss |
+| `--device` | `auto` | `auto` picks CUDA, then Apple MPS, then CPU. Or set explicitly: `cpu`, `cuda`, `cuda:0`, `mps` |
+| `--date-col` | `date` | Date column name in `--input`, for CSVs that don't use the bundled generator's naming |
+| `--value-col` | `value` | Value column name in `--input` |
 
 </div>
 
@@ -270,6 +280,8 @@ python src/evaluate.py \
 ```
 
 `--lookback`/`--horizon` are optional here and default to whatever the checkpoint was trained with. Pass them explicitly only to double-check they match, a mismatched value raises a clear error instead of a raw tensor shape-mismatch failure.
+
+`--device`, `--date-col`, and `--value-col` work the same way as in `train_lstm.py` (see above); a CSV missing either configured column raises a clear error instead of a raw `KeyError`.
 
 ---
 
@@ -339,7 +351,7 @@ mypy src data
 pytest
 ```
 
-CI (`.github/workflows/ci.yml`) runs these checks on every push and pull request.
+CI (`.github/workflows/ci.yml`) runs these checks on every push and pull request. It also runs a `pip-audit` dependency scan (informational, `continue-on-error`); pinned dependency versions are kept on the latest audit-clean release available at time of update. Contributing changes? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
