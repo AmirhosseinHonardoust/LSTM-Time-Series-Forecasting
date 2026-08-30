@@ -15,9 +15,9 @@ A hands-on project for forecasting time-series with PyTorch LSTMs. It creates re
 - Saved artifacts: `best_lstm.pt`, `scaler.json`, `metrics.json`
 
 ## Results
-- **RMSE:** 21.06  
-- **MAE:** 15.55  
-- **MAPE:** 7.40%
+- **RMSE:** 22.71  
+- **MAE:** 16.74  
+- **MAPE:** 7.96%
 
 > **Note on "forecast":** the plots and metrics above evaluate the model on the
 > last `horizon` days already present in the input CSV (a backtest), not real
